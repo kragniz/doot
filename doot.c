@@ -62,7 +62,8 @@ static bool to_doot_or_not_to_doot(void) {
 }
 
 
-#define LOG_DOOT printk(KERN_INFO "dooting '%s'!\n", filename)
+#define LOG_DOOT if (printk_ratelimit(  )) \
+    printk(KERN_INFO "dooting '%s'!\n", filename)
 
 asmlinkage long doot_open(const char __user *filename, int flags, umode_t mode)
 {
