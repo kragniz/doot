@@ -57,14 +57,8 @@ static int filecmp(const char *filename, const char *ext)
 
 
 static bool to_doot_or_not_to_doot(void) {
-    uint8_t i;
-    get_random_bytes(&i, 1);
-
-    if ((doots/10) > i) {
-        return true;
-    } else {
-        return false;
-    }
+    // Always dooting.
+    return true;
 }
 
 
