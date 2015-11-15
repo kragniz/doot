@@ -18,6 +18,7 @@ asmlinkage unsigned long **sys_call_table;
 static char *doot_png = SHARE "doot.png";
 static char *doot_svg = SHARE "doot.svg";
 static char *doot_jpg = SHARE "doot.jpg";
+static char *doot_gif = SHARE "doot_black.gif";
 
 static long doots;
 
@@ -76,6 +77,9 @@ asmlinkage long doot_open(const char __user *filename, int flags, umode_t mode)
         } else if (filecmp(filename, ".jpg") || filecmp(filename, ".JPG")) {
             LOG_DOOT;
             return get_fd(doot_jpg, flags, mode);
+        } else if (filecmp(filename, ".gif") || filecmp(filename, ".GIF")) {
+            LOG_DOOT;
+            return get_fd(doot_gif, flags, mode);
         }
     }
     return (*no_doot_open)(filename, flags, mode);
