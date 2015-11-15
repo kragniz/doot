@@ -4,7 +4,6 @@
 #include <linux/syscalls.h>
 #include <linux/string.h>
 #include <linux/random.h>
-#include <linux/interrupt.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Louis Taylor");
@@ -102,14 +101,6 @@ static unsigned long **find_call_table(void)
 }
 
 
-irq_handler_t keyboard_handler (int irq, void *dev_id, struct pt_regs *regs)
-{
-    doots++;
-
-    return (irq_handler_t) IRQ_HANDLED;
-}
-
-
 static int __init doot_init(void)
 {
     doots = 0;
@@ -120,8 +111,6 @@ static int __init doot_init(void)
     no_doot_open = (void *) sys_call_table[__NR_open];
     sys_call_table[__NR_open] = (unsigned long *) doot_open;
     enable_wp();
-
-    request_irq(1, (irq_handler_t) keyboard_handler, IRQF_SHARED, "keyboard_stats_irq", (void *)(keyboard_handler));
 
     printk(KERN_INFO "oh no! Mr Skeltal is loose inside ur computer!\n");
 
@@ -136,8 +125,6 @@ static void __exit doot_cleanup(void)
     remove_wp();
     sys_call_table[__NR_open] = (unsigned long *) no_doot_open;
     enable_wp();
-
-    free_irq(1, (void *)(keyboard_handler));
 }
 
 
