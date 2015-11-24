@@ -10,6 +10,10 @@ Fetch doot dependencies (Red Hat flavoured):
 
     sudo dnf install kernel-headers kernel-devel
 
+On debian based distros:
+
+    sudo apt-get install linux-headers-generic
+
 Make and install Mr. Skeltal:
 
     make
