@@ -54,7 +54,6 @@ static void enable_wp(void)
 static int filecmp(const char *filename, const char *ext)
 {
     int l = strlen(filename);
-    pr_info("%s %s\n", filename, ext);
     return !strcmp(filename + l - 4, ext);
 }
 
@@ -66,16 +65,20 @@ static bool to_doot_or_not_to_doot(void) {
 
 
 #define LOG_DOOT if (printk_ratelimit()) \
-    printk(KERN_INFO "dooting '%s'!\n", filename)
+    printk(KERN_INFO "dooting '%s'!\n", name)
 
 asmlinkage long doot_open(const struct pt_regs *regs)
 {
-	char __user *filename = (char *)regs->di;
+	char __user *filename = (char *)regs->si;
     char name[128];
     long res = strncpy_from_user(name, filename, 128);
-    pr_info("saw %s\n", name);
     if (res <= 0)
 	    return res;
+    if (strlen(name) >= 3) {
+	   if (filecmp(name, ".png") || filecmp(name, ".PNG")) { 
+            LOG_DOOT;
+	   }
+	} 
     /* if (to_doot_or_not_to_doot()) { */
     /*     if (filecmp(name, ".png") || filecmp(name, ".PNG")) { */
     /*         LOG_DOOT; */
@@ -91,7 +94,6 @@ asmlinkage long doot_open(const struct pt_regs *regs)
     /*         return get_fd(doot_gif, flags, mode); */
     /*     } */
     /* } */
-    printk(KERN_INFO "doot");
     return no_doot_open(regs);
 }
 
@@ -144,10 +146,10 @@ static int __init doot_init(void)
     syscall_table = (sys_call_ptr_t *)kallsyms_lookup_name("sys_call_table");
     printk(KERN_INFO "found at %p\n", syscall_table);
 
-    no_doot_open = syscall_table[__NR_open];
+    no_doot_open = syscall_table[__NR_openat];
     remove_wp();
     
-    syscall_table[__NR_open] = doot_open;
+    syscall_table[__NR_openat] = doot_open;
     enable_wp();
 
     printk(KERN_INFO "oh no! Mr Skeltal is loose inside ur computer!\n");
@@ -161,7 +163,7 @@ static void __exit doot_cleanup(void)
     printk(KERN_INFO "dooted our last doot rip in piece\n");
 
     remove_wp();
-    syscall_table[__NR_open] =  no_doot_open;
+    syscall_table[__NR_openat] =  no_doot_open;
     enable_wp();
 }
 
