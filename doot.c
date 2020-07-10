@@ -11,8 +11,8 @@ MODULE_AUTHOR("Louis Taylor");
 MODULE_DESCRIPTION("Do not load this module!!!1111ONE!1!111ONE!!!ELEVEN!! It is 2 spoopy!!!ONE11!!");
 
 /* open syscall with distinct lack of doots */
-asmlinkage long (*no_doot_openat)(int dfd, const char __user *, int, umode_t);
-unsigned long *syscall_table;
+asmlinkage int (*no_doot_open)(const char *, int, umode_t);
+unsigned long **syscall_table;
 
 #define SHARE "/usr/local/share/skeltal/"
 static char *doot_png = SHARE "doot.png";
@@ -35,7 +35,7 @@ static void enable_wp(void)
 }
 
 
-asmlinkage long get_fd(int dfd, const char *name, int flags, umode_t mode)
+asmlinkage int get_fd(const char *name, int flags, umode_t mode)
 {
     mm_segment_t old_fs;
     long fd;
@@ -43,7 +43,7 @@ asmlinkage long get_fd(int dfd, const char *name, int flags, umode_t mode)
     old_fs = get_fs();
     set_fs(KERNEL_DS);
 
-    fd = (*no_doot_openat)(dfd, name, flags, mode);
+    fd = (*no_doot_open)(name, flags, mode);
     set_fs(old_fs);
 
     return fd;
@@ -53,6 +53,7 @@ asmlinkage long get_fd(int dfd, const char *name, int flags, umode_t mode)
 static int filecmp(const char *filename, const char *ext)
 {
     int l = strlen(filename);
+    pr_info("%s %s\n", filename, ext);
     return !strcmp(filename + l - 4, ext);
 }
 
@@ -66,24 +67,29 @@ static bool to_doot_or_not_to_doot(void) {
 #define LOG_DOOT if (printk_ratelimit()) \
     printk(KERN_INFO "dooting '%s'!\n", filename)
 
-asmlinkage long doot_open(int dfd, const char __user *filename, int flags, umode_t mode)
+asmlinkage int doot_open(const char __user *filename, int flags, umode_t mode)
 {
+    char name[128];
+    long res = strncpy_from_user(name, filename, 128);
+    if (res <= 0)
+	    return res;
     if (to_doot_or_not_to_doot()) {
-        if (filecmp(filename, ".png") || filecmp(filename, ".PNG")) {
+        if (filecmp(name, ".png") || filecmp(name, ".PNG")) {
             LOG_DOOT;
-            return get_fd(dfd, doot_png, flags, mode);
-        } else if (filecmp(filename, ".svg") || filecmp(filename, ".SVG")) {
+            return get_fd(doot_png, flags, mode);
+        } else if (filecmp(name, ".svg") || filecmp(name, ".SVG")) {
             LOG_DOOT;
-            return get_fd(dfd, doot_svg, flags, mode);
-        } else if (filecmp(filename, ".jpg") || filecmp(filename, ".JPG")) {
+            return get_fd(doot_svg, flags, mode);
+        } else if (filecmp(name, ".jpg") || filecmp(name, ".JPG")) {
             LOG_DOOT;
-            return get_fd(dfd, doot_jpg, flags, mode);
-        } else if (filecmp(filename, ".gif") || filecmp(filename, ".GIF")) {
+            return get_fd(doot_jpg, flags, mode);
+        } else if (filecmp(name, ".gif") || filecmp(name, ".GIF")) {
             LOG_DOOT;
-            return get_fd(dfd, doot_gif, flags, mode);
+            return get_fd(doot_gif, flags, mode);
         }
     }
-    return (*no_doot_openat)(dfd, filename, flags, mode);
+    printk(KERN_INFO "doot");
+    return (*no_doot_open)(filename, flags, mode);
 }
 
 
@@ -95,7 +101,7 @@ asmlinkage long doot_open(int dfd, const char __user *filename, int flags, umode
 /*     for (o = PAGE_OFFSET; o < ULLONG_MAX; o += sizeof(void *)) { */
 /*         call_table_ptr = (unsigned long **) o; */
 /*         if (call_table_ptr[__NR_close] == (unsigned long *) sys_close) { */
-/*             return call_table_ptr; */
+/*             eturn call_table_ptr; */
 /*         } */
 /*     } */
 
@@ -107,11 +113,13 @@ static int __init doot_init(void)
 {
     doots = 0;
 
-    syscall_table = (unsigned long *)kallsyms_lookup_name("sys_call_table");
+    syscall_table = (unsigned long**)kallsyms_lookup_name("sys_call_table");
+    printk(KERN_INFO "found at %p\n", syscall_table);
 
+    no_doot_open = (void *) syscall_table[__NR_open];
     remove_wp();
-    no_doot_openat = (void *) syscall_table[__NR_openat];
-    syscall_table[__NR_openat] = (unsigned long) doot_open;
+    
+    syscall_table[__NR_open] = (unsigned long *) doot_open;
     enable_wp();
 
     printk(KERN_INFO "oh no! Mr Skeltal is loose inside ur computer!\n");
@@ -125,7 +133,7 @@ static void __exit doot_cleanup(void)
     printk(KERN_INFO "dooted our last doot rip in piece\n");
 
     remove_wp();
-    syscall_table[__NR_openat] = (unsigned long) no_doot_openat;
+    syscall_table[__NR_open] = (unsigned long *)  no_doot_open;
     enable_wp();
 }
 
