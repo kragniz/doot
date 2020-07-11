@@ -23,7 +23,6 @@ static long doots;
  */
 static inline void mywrite_cr0(unsigned long cr0)
 {
-	
 	asm volatile("mov %0,%%cr0" : "+r"(cr0), "+m"(__force_order));
 }
 
@@ -31,7 +30,7 @@ static void enable_wp(void)
 {
 	unsigned long cr0;
 
-        cr0 = read_cr0();
+	cr0 = read_cr0();
 	set_bit(16, &cr0);
 	mywrite_cr0(cr0);
 }
@@ -39,7 +38,7 @@ static void enable_wp(void)
 static void disable_wp(void)
 {
 	unsigned long cr0;
-       
+
 	cr0 = read_cr0();
 	clear_bit(16, &cr0);
 	mywrite_cr0(cr0);
@@ -69,7 +68,7 @@ static asmlinkage int get_fd(const char *name, const struct pt_regs *regs)
 static int extcmp(const char *filename, const char *ext)
 {
 	size_t l;
-       
+
 	l = strlen(filename);
 	return !strcmp(filename + l - 4, ext);
 }
@@ -89,7 +88,7 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 	char name[128];
 	size_t len;
 
-	filename = (char *) regs->si; 
+	filename = (char *) regs->si;
 
 	/* We shouldn't directly use filename */
 	len  = strncpy_from_user(name, filename, sizeof(name));
@@ -100,11 +99,11 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 
 	/* Check if dootable and long enough to have an extension */
 	if (to_doot_or_not_to_doot() && strlen(name) >= 3) {
-		if (extcmp(name, ".png") || extcmp(name, ".PNG")) { 
+		if (extcmp(name, ".png") || extcmp(name, ".PNG")) {
 			LOG_DOOT;
 			doots++;
 			return get_fd(doot_png, regs);
-		} else if (extcmp(name, ".svg") || extcmp(name, ".SVG")) { 
+		} else if (extcmp(name, ".svg") || extcmp(name, ".SVG")) {
 			LOG_DOOT;
 			doots++;
 			return get_fd(doot_svg, regs);
@@ -117,7 +116,7 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 			doots++;
 			return get_fd(doot_gif, regs);
 		}
-	} 
+	}
 
 	return no_doot_open(regs);
 }
@@ -126,8 +125,9 @@ int doot_init(void)
 {
 	doots = 0;
 
-	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name("sys_call_table");
-	printk(KERN_INFO "found syscall table at %p\n", syscall_table);
+	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name(
+							"sys_call_table");
+	pr_info("found syscall table at %p\n", syscall_table);
 
 	/* Let's store the real openat so we can use it, too */
 	no_doot_open = syscall_table[__NR_openat];
@@ -136,18 +136,18 @@ int doot_init(void)
 	syscall_table[__NR_openat] = doot_open;
 	enable_wp();
 
-	printk(KERN_INFO "oh no! Mr Skeltal is loose inside ur computer!\n");
+	pr_info("oh no! Mr Skeltal is loose inside ur computer!\n");
 
 	return 0;
 }
 
 void doot_exit(void)
 {
-	printk(KERN_INFO "dooted our last doot rip in piece\n");
-	printk(KERN_INFO "total doots: %ld\n", doots);
+	pr_info("dooted our last doot rip in piece\n");
+	pr_info("total doots: %ld\n", doots);
 
 	disable_wp();
-	syscall_table[__NR_openat] =  no_doot_open;
+	syscall_table[__NR_openat] = no_doot_open;
 	enable_wp();
 }
 
@@ -156,5 +156,4 @@ module_exit(doot_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("LTHM");
-MODULE_DESCRIPTION("Do not load this module!!!1111ONE!1!111ONE!!!ELEVEN!!"
-		   "It is 2 spoopy!!!ONE11!!");
+MODULE_DESCRIPTION("Do not load this module!!!1111ONE!1!111ONE!!!ELEVEN!! It is 2 spoopy!!!ONE11!!");
