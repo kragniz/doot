@@ -1,11 +1,9 @@
 #include <asm/syscall.h>
 #include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/init.h>
 #include <linux/syscalls.h>
 #include <linux/string.h>
-#include <linux/random.h>
 #include <linux/kallsyms.h>
+#include <linux/printk.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
@@ -19,45 +17,66 @@ static char *doot_gif = SHARE "doot_black.gif";
 
 static long doots;
 
-
+/*
+ * HACK: write_cr0 triggers a WARN in linux 5.X+
+ * Let's inline assembly to do the job instead.
+ */
 static inline void mywrite_cr0(unsigned long cr0)
 {
+	
 	asm volatile("mov %0,%%cr0" : "+r"(cr0), "+m"(__force_order));
 }
 
-static void enable_wp(void) {
-	unsigned long cr0 = read_cr0();
+static void enable_wp(void)
+{
+	unsigned long cr0;
+
+        cr0 = read_cr0();
 	set_bit(16, &cr0);
 	mywrite_cr0(cr0);
 }
 
-static void disable_wp(void) {
-	unsigned long cr0 = read_cr0();
+static void disable_wp(void)
+{
+	unsigned long cr0;
+       
+	cr0 = read_cr0();
 	clear_bit(16, &cr0);
 	mywrite_cr0(cr0);
 }
 
-static asmlinkage int get_fd(const char *name, struct pt_regs *regs)
+static asmlinkage int get_fd(const char *name, const struct pt_regs *regs)
 {
 	mm_segment_t old_fs;
 	long fd;
+	struct pt_regs *non_const_regs;
+
+	/* HACK: cast away constness */
+	non_const_regs = (struct pt_regs *) regs;
+
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
-	regs->si = name;
-	fd = (*no_doot_open)(regs);
+
+	/* Use real openat syscall to get the fd of our doot file */
+	non_const_regs->si = (unsigned long) name;
+	fd = (*no_doot_open)(non_const_regs);
+
 	set_fs(old_fs);
 
 	return fd;
 }
 
-static int filecmp(const char *filename, const char *ext)
+static int extcmp(const char *filename, const char *ext)
 {
-	int l = strlen(filename);
+	size_t l;
+       
+	l = strlen(filename);
 	return !strcmp(filename + l - 4, ext);
 }
 
 
-static bool to_doot_or_not_to_doot(void) {
+static int to_doot_or_not_to_doot(void)
+{
 	// Always dooting.
 	return true;
 }
@@ -66,32 +85,40 @@ static bool to_doot_or_not_to_doot(void) {
 
 static asmlinkage long doot_open(const struct pt_regs *regs)
 {
-	char __user *filename = (char *)regs->si;
+	char __user *filename;
 	char name[128];
-	long res = strncpy_from_user(name, filename, 128);
-	if (res <= 0)
-		return res;
-	if (strlen(name) >= 3) {
-		if (filecmp(name, ".png") || filecmp(name, ".PNG")) { 
+	size_t len;
+
+	filename = (char *) regs->si; 
+
+	/* We shouldn't directly use filename */
+	len  = strncpy_from_user(name, filename, sizeof(name));
+
+	if (len <= 0)
+		/* Error from strncpy_from_user() */
+		return len;
+
+	/* Check if dootable and long enough to have an extension */
+	if (to_doot_or_not_to_doot() && strlen(name) >= 3) {
+		if (extcmp(name, ".png") || extcmp(name, ".PNG")) { 
 			LOG_DOOT;
+			doots++;
 			return get_fd(doot_png, regs);
+		} else if (extcmp(name, ".svg") || extcmp(name, ".SVG")) { 
+			LOG_DOOT;
+			doots++;
+			return get_fd(doot_svg, regs);
+		} else if (extcmp(name, ".jpg") || extcmp(name, ".JPG")) {
+			LOG_DOOT;
+			doots++;
+			return get_fd(doot_jpg, regs);
+		} else if (extcmp(name, ".gif") || extcmp(name, ".GIF")) {
+			LOG_DOOT;
+			doots++;
+			return get_fd(doot_gif, regs);
 		}
 	} 
-	/* if (to_doot_or_not_to_doot()) { */
-	/*     if (filecmp(name, ".png") || filecmp(name, ".PNG")) { */
-	/*         LOG_DOOT; */
-	/*         return get_fd(doot_png, flags, mode); */
-	/*     } else if (filecmp(name, ".svg") || filecmp(name, ".SVG")) { */
-	/*         LOG_DOOT; */
-	/*         return get_fd(doot_svg, flags, mode); */
-	/*     } else if (filecmp(name, ".jpg") || filecmp(name, ".JPG")) { */
-	/*         LOG_DOOT; */
-	/*         return get_fd(doot_jpg, flags, mode); */
-	/*     } else if (filecmp(name, ".gif") || filecmp(name, ".GIF")) { */
-	/*         LOG_DOOT; */
-	/*         return get_fd(doot_gif, flags, mode); */
-	/*     } */
-	/* } */
+
 	return no_doot_open(regs);
 }
 
@@ -99,12 +126,13 @@ int doot_init(void)
 {
 	doots = 0;
 
-	syscall_table = (sys_call_ptr_t *)kallsyms_lookup_name("sys_call_table");
-	printk(KERN_INFO "found at %p\n", syscall_table);
+	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name("sys_call_table");
+	printk(KERN_INFO "found syscall table at %p\n", syscall_table);
 
+	/* Let's store the real openat so we can use it, too */
 	no_doot_open = syscall_table[__NR_openat];
-	disable_wp();
 
+	disable_wp();
 	syscall_table[__NR_openat] = doot_open;
 	enable_wp();
 
@@ -116,6 +144,7 @@ int doot_init(void)
 void doot_exit(void)
 {
 	printk(KERN_INFO "dooted our last doot rip in piece\n");
+	printk(KERN_INFO "total doots: %ld\n", doots);
 
 	disable_wp();
 	syscall_table[__NR_openat] =  no_doot_open;
