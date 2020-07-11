@@ -1,3 +1,4 @@
+#include <asm/syscall.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -24,15 +25,30 @@ static char *doot_gif = SHARE "doot_black.gif";
 static long doots;
 
 
-static void remove_wp(void)
-{
-    write_cr0(read_cr0() & (~ 0x10000));
+/* static void remove_wp(void) */
+/* { */
+/*     write_cr0(read_cr0() & (~ 0x10000)); */
+/* } */
+
+
+/* static void enable_wp(void) */
+/* { */
+/*     write_cr0(read_cr0() | 0x10000); */
+/* } */
+inline void mywrite_cr0(unsigned long cr0) {
+  asm volatile("mov %0,%%cr0" : "+r"(cr0), "+m"(__force_order));
 }
 
+void enable_wp(void) {
+  unsigned long cr0 = read_cr0();
+  set_bit(16, &cr0);
+  mywrite_cr0(cr0);
+}
 
-static void enable_wp(void)
-{
-    write_cr0(read_cr0() | 0x10000);
+void disable_wp(void) {
+  unsigned long cr0 = read_cr0();
+  clear_bit(16, &cr0);
+  mywrite_cr0(cr0);
 }
 
 
@@ -147,7 +163,7 @@ static int __init doot_init(void)
     printk(KERN_INFO "found at %p\n", syscall_table);
 
     no_doot_open = syscall_table[__NR_openat];
-    remove_wp();
+    disable_wp();
     
     syscall_table[__NR_openat] = doot_open;
     enable_wp();
@@ -162,7 +178,7 @@ static void __exit doot_cleanup(void)
 {
     printk(KERN_INFO "dooted our last doot rip in piece\n");
 
-    remove_wp();
+    disable_wp();
     syscall_table[__NR_openat] =  no_doot_open;
     enable_wp();
 }
