@@ -5,6 +5,7 @@
 #include <linux/kallsyms.h>
 #include <linux/printk.h>
 #include <linux/limits.h>
+#include <linux/slab.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
