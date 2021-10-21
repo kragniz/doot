@@ -6,6 +6,7 @@
 #include <linux/printk.h>
 #include <linux/limits.h>
 #include <linux/slab.h>
+#include <linux/kprobes.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
@@ -19,13 +20,34 @@ static char *doot_gif = SHARE "doot_black.gif";
 
 static long doots;
 
+typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
+kallsyms_lookup_name_t kallsyms_lookup_name_func = NULL;
+void (*set_fs_func) (mm_segment_t seg) = NULL;
+mm_segment_t (*get_fs_func) (void) = NULL;
+
+#define KERNEL_DS	(mm_segment_t) { -0UL }
+
+static void get_functions(void)
+{
+	struct kprobe kp = {
+		.symbol_name = "kallsyms_lookup_name"
+	};
+
+	register_kprobe(&kp);
+	kallsyms_lookup_name_func = (kallsyms_lookup_name_t) kp.addr;
+	unregister_kprobe(&kp);
+
+	set_fs_func = kallsyms_lookup_name_func("set_fs");
+	get_fs_func = kallsyms_lookup_name_func("get_fs");
+}
+
 /*
  * HACK: write_cr0 triggers a WARN in linux 5.X+
  * Let's inline assembly to do the job instead.
  */
-static inline void mywrite_cr0(unsigned long cr0)
-{
-	asm volatile("mov %0,%%cr0" : "+r"(cr0), "+m"(__force_order));
+
+inline void my_write_cr0(unsigned long cr0) {
+  asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory");
 }
 
 static void enable_wp(void)
@@ -34,7 +56,7 @@ static void enable_wp(void)
 
 	cr0 = read_cr0();
 	set_bit(16, &cr0);
-	mywrite_cr0(cr0);
+	my_write_cr0(cr0);
 }
 
 static void disable_wp(void)
@@ -43,7 +65,7 @@ static void disable_wp(void)
 
 	cr0 = read_cr0();
 	clear_bit(16, &cr0);
-	mywrite_cr0(cr0);
+	my_write_cr0(cr0);
 }
 
 static asmlinkage long get_fd(const char *name, const struct pt_regs *regs)
@@ -55,14 +77,14 @@ static asmlinkage long get_fd(const char *name, const struct pt_regs *regs)
 	/* HACK: cast away constness */
 	non_const_regs = (struct pt_regs *) regs;
 
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
+	old_fs = get_fs_func();
+	set_fs_func(KERNEL_DS);
 
 	/* Use real openat syscall to get the fd of our doot file */
 	non_const_regs->si = (unsigned long) name;
 	fd = (*no_doot_open)(non_const_regs);
 
-	set_fs(old_fs);
+	set_fs_func(old_fs);
 
 	return fd;
 }
@@ -138,7 +160,9 @@ int doot_init(void)
 {
 	doots = 0;
 
-	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name(
+	get_functions();
+
+	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name_func(
 							"sys_call_table");
 	pr_info("found syscall table at %p\n", syscall_table);
 
