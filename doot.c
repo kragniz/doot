@@ -197,6 +197,7 @@ int doot_init(void)
 	struct kprobe kp;
 
 	/* find the address of kallsyms_lookup_name */
+	memset(&kp, 0, sizeof(struct kprobe));
 	kp.symbol_name = "kallsyms_lookup_name";
 	register_kprobe(&kp);
 	kallsyms_lookup_name_func = (kallsyms_lookup_name_t) kp.addr;
