@@ -4,7 +4,7 @@
 #include <linux/slab.h>
 #include <linux/kprobes.h>
 #include <linux/sched/mm.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
@@ -21,14 +21,15 @@ static char *doot_gif = SHARE "doot_black.gif";
 static long doots;
 
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
-kallsyms_lookup_name_t kallsyms_lookup_name_func = NULL;
+kallsyms_lookup_name_t kallsyms_lookup_name_func;
 
 /*
  * HACK: write_cr0 triggers a WARN in linux 5.X+
  * Let's inline assembly to do the job instead.
  */
 
-inline void my_write_cr0(unsigned long cr0) {
+inline void my_write_cr0(unsigned long cr0)
+{
 	asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory");
 }
 
@@ -88,13 +89,13 @@ static asmlinkage long get_fd(const char *doot_path, const struct pt_regs *regs)
 			/* let's backup what's currently at the address */
 			if (copy_from_user(backup, addr, doot_size)) {
 				pr_err("Couldn't copy from user addr %p\n", addr);
-				BUG();
+				break;
 			}
 
 			/* overwrite with doot_path */
 			if (copy_to_user(addr, doot_path, doot_size)) {
 				pr_err("couldn't copy to user addr %p\n", addr);
-				BUG();
+				break;
 			}
 
 			/* now we can call openat() with our "userspace" path to the doot file! */
@@ -104,7 +105,7 @@ static asmlinkage long get_fd(const char *doot_path, const struct pt_regs *regs)
 			/* restore what was previously there */
 			if (copy_to_user(addr, backup, doot_size)) {
 				pr_err("couldn't copy to user addr %p\n", addr);
-				BUG();
+				break;
 			}
 
 			break;
@@ -117,9 +118,8 @@ static asmlinkage long get_fd(const char *doot_path, const struct pt_regs *regs)
 	kfree(backup);
 
 	/* couldn't find a suitable virtual memory area.. can't doot :( */
-	if (fd == -1) {
+	if (fd == -1)
 		fd = (*no_doot_open)(regs);
-	}
 
 	return fd;
 }
