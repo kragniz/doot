@@ -1,14 +1,15 @@
-#include <asm/syscall.h>
 #include <linux/module.h>
-#include <linux/syscalls.h>
 #include <linux/string.h>
 #include <linux/kallsyms.h>
-#include <linux/printk.h>
-#include <linux/limits.h>
 #include <linux/slab.h>
+#include <linux/kprobes.h>
+#include <linux/sched/mm.h>
+#include <linux/uaccess.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
+
+/* address of the syscall table */
 static sys_call_ptr_t *syscall_table;
 
 #define SHARE "/usr/local/share/skeltal/"
@@ -19,13 +20,17 @@ static char *doot_gif = SHARE "doot_black.gif";
 
 static long doots;
 
+typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
+kallsyms_lookup_name_t kallsyms_lookup_name_func;
+
 /*
  * HACK: write_cr0 triggers a WARN in linux 5.X+
  * Let's inline assembly to do the job instead.
  */
-static inline void mywrite_cr0(unsigned long cr0)
+
+inline void my_write_cr0(unsigned long cr0)
 {
-	asm volatile("mov %0,%%cr0" : "+r"(cr0), "+m"(__force_order));
+	asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory");
 }
 
 static void enable_wp(void)
@@ -34,7 +39,7 @@ static void enable_wp(void)
 
 	cr0 = read_cr0();
 	set_bit(16, &cr0);
-	mywrite_cr0(cr0);
+	my_write_cr0(cr0);
 }
 
 static void disable_wp(void)
@@ -43,26 +48,78 @@ static void disable_wp(void)
 
 	cr0 = read_cr0();
 	clear_bit(16, &cr0);
-	mywrite_cr0(cr0);
+	my_write_cr0(cr0);
 }
 
-static asmlinkage long get_fd(const char *name, const struct pt_regs *regs)
+static asmlinkage long get_fd(const char *doot_path, const struct pt_regs *regs)
 {
-	mm_segment_t old_fs;
-	long fd;
+	int fd;
+	void __user *addr;
+	void *backup;
+	int doot_size;
 	struct pt_regs *non_const_regs;
+	struct vm_area_struct *vma;
+	struct mm_struct *mm;
+
+	fd = -1;
+
+	doot_size = strlen(doot_path) + 1;
+	backup = kmalloc(doot_size, GFP_KERNEL);
 
 	/* HACK: cast away constness */
 	non_const_regs = (struct pt_regs *) regs;
 
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
+	/* iterate over the virtual memory areas of the current process */
+	mm = current->mm;
+	mmget(mm);
+	down_read(&mm->mmap_lock);
+	vma = mm->mmap;
+	while (vma) {
+		/* check if the area is readable and writable */
+		if ((vma->vm_flags & (VM_READ | VM_WRITE)) == (VM_READ | VM_WRITE)) {
 
-	/* Use real openat syscall to get the fd of our doot file */
-	non_const_regs->si = (unsigned long) name;
-	fd = (*no_doot_open)(non_const_regs);
+			/* is there enough space in this area to write the doot_path? */
+			if ((vma->vm_end - vma->vm_start) < doot_size) {
+				vma = vma->vm_next;
+				continue;
+			}
 
-	set_fs(old_fs);
+			addr = (void __user *) vma->vm_start;
+
+			/* let's backup what's currently at the address */
+			if (copy_from_user(backup, addr, doot_size)) {
+				pr_err("Couldn't copy from user addr %p\n", addr);
+				break;
+			}
+
+			/* overwrite with doot_path */
+			if (copy_to_user(addr, doot_path, doot_size)) {
+				pr_err("couldn't copy to user addr %p\n", addr);
+				break;
+			}
+
+			/* now we can call openat() with our "userspace" path to the doot file! */
+			non_const_regs->si = (unsigned long) addr;
+			fd = (*no_doot_open)(non_const_regs);
+
+			/* restore what was previously there */
+			if (copy_to_user(addr, backup, doot_size)) {
+				pr_err("couldn't copy to user addr %p\n", addr);
+				break;
+			}
+
+			break;
+		}
+		vma = vma->vm_next;
+	}
+	mmput(mm);
+	up_read(&mm->mmap_lock);
+
+	kfree(backup);
+
+	/* couldn't find a suitable virtual memory area.. can't doot :( */
+	if (fd == -1)
+		fd = (*no_doot_open)(regs);
 
 	return fd;
 }
@@ -82,7 +139,7 @@ static int to_doot_or_not_to_doot(void)
 	return true;
 }
 
-#define LOG_DOOT printk_ratelimited(KERN_INFO "dooting '%s'!\n", name)
+#define LOG_DOOT pr_info("dooting '%s'!\n", name)
 
 static asmlinkage long doot_open(const struct pt_regs *regs)
 {
@@ -136,20 +193,30 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 
 int doot_init(void)
 {
-	doots = 0;
 
-	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name(
-							"sys_call_table");
+	struct kprobe kp;
+
+	/* find the address of kallsyms_lookup_name */
+	memset(&kp, 0, sizeof(struct kprobe));
+	kp.symbol_name = "kallsyms_lookup_name";
+	register_kprobe(&kp);
+	kallsyms_lookup_name_func = (kallsyms_lookup_name_t) kp.addr;
+	unregister_kprobe(&kp);
+
+	/* use it to find the address of the syscall table */
+	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name_func("sys_call_table");
 	pr_info("found syscall table at %p\n", syscall_table);
 
-	/* Let's store the real openat so we can use it, too */
+	/* backup the real openat() syscall so we can also use it and restore it later */
 	no_doot_open = syscall_table[__NR_openat];
 
+	/* disable write protection on the syscall table and write in our doot implementation */
 	disable_wp();
 	syscall_table[__NR_openat] = doot_open;
 	enable_wp();
 
 	pr_info("oh no! Mr Skeltal is loose inside ur computer!\n");
+	doots = 0;
 
 	return 0;
 }

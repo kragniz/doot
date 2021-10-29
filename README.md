@@ -18,8 +18,7 @@ Support
 -------
 I'm pretty sure this will only work on **x86-64** architectures, based off of [this](https://lwn.net/Articles/750536/)
 patch. Additionally, I've only tested on the following distributions:
-- **Debian 10.20 (Buster), kernel version 4.19**
-- **Ubuntu 20.04 (Focal), kernel version 5.4**
+- **Debian 11 (bullseye), kernel version 5.10**
 
 Install
 -------
