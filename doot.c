@@ -5,12 +5,23 @@
 #include <linux/kprobes.h>
 #include <linux/sched/mm.h>
 #include <linux/uaccess.h>
+#include <linux/syscalls.h>
+#include <asm/syscall.h>
+
+#if defined(CONFIG_X86)
+typedef sys_call_ptr_t arch_syscall_ptr_t;
+#elif defined(CONFIG_ARM64)
+typedef syscall_fn_t arch_syscall_ptr_t;
+#else
+#error "Unsupported architecture for doot :("
+#endif
+
 
 /* openat syscall with distinct lack of doots */
-static sys_call_ptr_t no_doot_open;
+static arch_syscall_ptr_t no_doot_open;
 
 /* address of the syscall table */
-static sys_call_ptr_t *syscall_table;
+static arch_syscall_ptr_t *syscall_table;
 
 #define SHARE "/usr/local/share/skeltal/"
 static char *doot_png = SHARE "doot.png";
@@ -28,27 +39,39 @@ kallsyms_lookup_name_t kallsyms_lookup_name_func;
  * Let's inline assembly to do the job instead.
  */
 
+#if defined(CONFIG_X86)
 inline void my_write_cr0(unsigned long cr0)
 {
 	asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory");
 }
+#elif defined(CONFIG_ARM64)
+void (*update_mapping_prot)(phys_addr_t phys, unsigned long virt, phys_addr_t size, pgprot_t prot);
+#endif
 
 static void enable_wp(void)
 {
+#if defined(CONFIG_X86)
 	unsigned long cr0;
 
 	cr0 = read_cr0();
 	set_bit(16, &cr0);
 	my_write_cr0(cr0);
+#elif defined(CONFIG_ARM64)
+	update_mapping_prot(__pa_symbol((unsigned long)syscall_table), (unsigned long)syscall_table, __NR_syscalls * sizeof(*syscall_table), PAGE_KERNEL_RO);
+#endif
 }
 
 static void disable_wp(void)
 {
+#if defined(CONFIG_X86)
 	unsigned long cr0;
 
 	cr0 = read_cr0();
 	clear_bit(16, &cr0);
 	my_write_cr0(cr0);
+#elif defined(CONFIG_ARM64)
+	update_mapping_prot(__pa_symbol((unsigned long)syscall_table), (unsigned long)syscall_table, __NR_syscalls * sizeof(*syscall_table), PAGE_KERNEL);
+#endif
 }
 
 static asmlinkage long get_fd(const char *doot_path, const struct pt_regs *regs)
@@ -99,7 +122,11 @@ static asmlinkage long get_fd(const char *doot_path, const struct pt_regs *regs)
 			}
 
 			/* now we can call openat() with our "userspace" path to the doot file! */
+#if defined(CONFIG_X86)
 			non_const_regs->si = (unsigned long) addr;
+#elif defined(CONFIG_ARM64)
+			non_const_regs->regs[1] = (unsigned long) addr;
+#endif
 			fd = (*no_doot_open)(non_const_regs);
 
 			/* restore what was previously there */
@@ -147,7 +174,11 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 	char *name;
 	size_t len;
 
+#if defined(CONFIG_X86)
 	filename = (char *) regs->si;
+#elif defined(CONFIG_ARM64)
+	filename = (char *) regs->regs[1];
+#endif
 
 	/* We shouldn't directly use filename */
 	name = kmalloc(PATH_MAX, GFP_KERNEL);
@@ -191,6 +222,31 @@ static asmlinkage long doot_open(const struct pt_regs *regs)
 	return no_doot_open(regs);
 }
 
+#ifdef CONFIG_ARM64
+/*
+ * run over the memory till find the sys call talbe
+ * doing so, by searching the sys call close.
+ *
+ * stolen from:
+ * https://infosecwriteups.com/linux-kernel-module-rootkit-syscall-table-hijacking-8f1bc0bd099c
+ */
+asmlinkage long (*sys_close)(unsigned int fd);
+static unsigned long * obtain_syscall_table_bf(void)
+{
+  unsigned long *syscall_table;
+	unsigned long int i;
+
+	for (i = (unsigned long int)sys_close; i < ULONG_MAX;
+			i += sizeof(void *)) {
+		syscall_table = (unsigned long *)i;
+
+		if (syscall_table[__NR_close] == (unsigned long)sys_close)
+			return syscall_table;
+	}
+	return NULL;
+}
+#endif
+
 int doot_init(void)
 {
 
@@ -204,8 +260,24 @@ int doot_init(void)
 	unregister_kprobe(&kp);
 
 	/* use it to find the address of the syscall table */
-	syscall_table = (sys_call_ptr_t *) kallsyms_lookup_name_func("sys_call_table");
-	pr_info("found syscall table at %p\n", syscall_table);
+#if defined(CONFIG_X86)
+	syscall_table = (arch_syscall_ptr_t *) kallsyms_lookup_name_func("sys_call_table");
+#elif defined(CONFIG_ARM64)
+	update_mapping_prot = (void *)kallsyms_lookup_name_func("update_mapping_prot");
+	if (update_mapping_prot == NULL) {
+		pr_info("failed to lookup update_mapping_prot\n");
+		return -ENOENT;
+	}
+	sys_close = (void *)kallsyms_lookup_name_func("__arm64_sys_close");
+	if (sys_close == NULL) {
+		pr_info("failed to lookup __arm64_sys_close\n");
+		return -ENOENT;
+	}
+	syscall_table = (arch_syscall_ptr_t *) obtain_syscall_table_bf();
+#endif
+	pr_info("found syscall table at 0x%lx\n", (unsigned long)syscall_table);
+	if (syscall_table == NULL)
+		return -ENOENT;
 
 	/* backup the real openat() syscall so we can also use it and restore it later */
 	no_doot_open = syscall_table[__NR_openat];
