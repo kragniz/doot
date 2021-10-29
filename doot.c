@@ -7,6 +7,8 @@
 #include <linux/limits.h>
 #include <linux/slab.h>
 #include <linux/kprobes.h>
+#include <linux/sched/mm.h>
+#include <asm/uaccess.h>
 
 /* openat syscall with distinct lack of doots */
 static sys_call_ptr_t no_doot_open;
@@ -39,6 +41,7 @@ static void get_functions(void)
 
 	set_fs_func = kallsyms_lookup_name_func("set_fs");
 	get_fs_func = kallsyms_lookup_name_func("get_fs");
+	printk(KERN_INFO "%p %p\n", set_fs_func, get_fs_func);
 }
 
 /*
@@ -47,7 +50,7 @@ static void get_functions(void)
  */
 
 inline void my_write_cr0(unsigned long cr0) {
-  asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory");
+	asm volatile("mov %0,%%cr0" : "+r"(cr0) : : "memory");
 }
 
 static void enable_wp(void)
@@ -72,19 +75,62 @@ static asmlinkage long get_fd(const char *name, const struct pt_regs *regs)
 {
 	mm_segment_t old_fs;
 	long fd;
+	unsigned long addr;
+	int ret, size;
 	struct pt_regs *non_const_regs;
+	char buf[512];
+
+
+	char *doot_name = kmalloc(strlen(name) + 1, GFP_KERNEL);
+	strcpy(doot_name, name);
+	struct mm_struct *mm = current->mm;;
+	mmget(mm);
+	struct vm_area_struct *vma;
+	down_read(&mm->mmap_lock);
+	vma = mm->mmap;
+	while (vma) {
+		if (vma && (vma->vm_flags & (VM_READ | VM_WRITE)) == (VM_READ | VM_WRITE)) {
+
+			// Read without overflowing
+			size = vma->vm_end - vma->vm_start;
+			if (size < strlen(doot_name) + 1) {
+				vma = vma->vm_next;
+				continue;
+			}
+
+			// Attempt to get the data from the start of the vma
+			addr = (void __user *)vma->vm_start;
+
+			//if (access_ok(VERIFY_READ, addr, size)) {
+			ret = copy_from_user(buf, addr, strlen(doot_name) + 1);
+			ret = copy_to_user(addr, doot_name, strlen(doot_name) + 1);
+
+
+			non_const_regs = (struct pt_regs *) regs;
+			non_const_regs->si = addr;
+			fd = (*no_doot_open)(non_const_regs);
+
+			copy_to_user(addr, buf, strlen(doot_name) + 1);
+
+			break;
+			// Release the lock
+		}
+		vma = vma->vm_next;
+	}
+	mmput(mm);
+	up_read(&mm->mmap_lock);
 
 	/* HACK: cast away constness */
-	non_const_regs = (struct pt_regs *) regs;
 
-	old_fs = get_fs_func();
-	set_fs_func(KERNEL_DS);
+	/* old_fs = get_fs_func(); */
+	/* set_fs_func(KERNEL_DS); */
+
 
 	/* Use real openat syscall to get the fd of our doot file */
-	non_const_regs->si = (unsigned long) name;
-	fd = (*no_doot_open)(non_const_regs);
+	/* pr_info("%d\n", fd); */
+	/* kfree(doot_name); */
 
-	set_fs_func(old_fs);
+	/* set_fs_func(old_fs); */
 
 	return fd;
 }
@@ -104,7 +150,7 @@ static int to_doot_or_not_to_doot(void)
 	return true;
 }
 
-#define LOG_DOOT printk_ratelimited(KERN_INFO "dooting '%s'!\n", name)
+#define LOG_DOOT pr_info("dooting '%s'!\n", name)
 
 static asmlinkage long doot_open(const struct pt_regs *regs)
 {
